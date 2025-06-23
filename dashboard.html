@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>Dashboard ESP32 - Análisis de Datos IoT</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-database-compat.js"></script>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>🚀 Dashboard ESP32 IoT</h1>
+            <p>Monitoreo Inteligente en Tiempo Real</p>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-icon">🔗</div>
+                <div class="status-content">
+                    <div class="status-label">Estado de Conexión</div>
+                    <div class="status-value" id="connectionStatus">Conectando...</div>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-icon">⏰</div>
+                <div class="status-content">
+                    <div class="status-label">Última Actualización</div>
+                    <div class="status-value" id="lastUpdate">--:--</div>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-icon">📊</div>
+                <div class="status-content">
+                    <div class="status-label">Total de Registros</div>
+                    <div class="status-value" id="totalRecords">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="dispositivoSelect">🔧 Dispositivo</label>
+                <select id="dispositivoSelect">
+                    <option value="ESP32_001">ESP32_001</option>
+                    <option value="ESP32_002">ESP32_002</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="periodoSelect">📅 Período</label>
+                <select id="periodoSelect">
+                    <option value="1">Última hora</option>
+                    <option value="6">Últimas 6 horas</option>
+                    <option value="24">Últimas 24 horas</option>
+                    <option value="168">Última semana</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="tipoGrafico">📈 Tipo de Gráfico</label>
+                <select id="tipoGrafico">
+                    <option value="line">Líneas</option>
+                    <option value="bar">Barras</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="actualizarDatos()">🔄 Actualizar Datos</button>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">🌡️</div>
+                <div class="stat-value" id="avgTemp">--°C</div>
+                <div class="stat-label">Temperatura Promedio</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">💡</div>
+                <div class="stat-value" id="avgLight1">--</div>
+                <div class="stat-label">Sensor Luz 1</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🔆</div>
+                <div class="stat-value" id="avgLight2">--</div>
+                <div class="stat-label">Sensor Luz 2</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚡</div>
+                <div class="stat-value" id="activeDevices">--</div>
+                <div class="stat-label">Dispositivos Activos</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-container">
+                <div class="chart-title">🌡️ Temperatura vs Tiempo</div>
+                <div class="chart-canvas">
+                    <canvas id="tempChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">💡 Sensores de Luz</div>
+                <div class="chart-canvas">
+                    <canvas id="lightChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">⚙️ Estado de Actuadores</div>
+                <div class="chart-canvas">
+                    <canvas id="actuatorsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">📊 Distribución por Horas</div>
+                <div class="chart-canvas">
+                    <canvas id="hourlyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="data-table">
+            <h3>📋 Últimos Registros de Sensores</h3>
+            <div id="loadingIndicator" class="loading">
+                <div class="spinner"></div>
+                Cargando datos desde Firebase...
+            </div>
+            <div id="errorMessage" class="error" style="display: none;"></div>
+            <div class="table-container">
+                <table id="dataTable" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th>📅 Fecha/Hora</th>
+                            <th>🌡️ Temperatura</th>
+                            <th>💡 Luz 1</th>
+                            <th>🔆 Luz 2</th>
+                            <th>💡 LEDs</th>
+                            <th>🌀 Ventilador</th>
+                            <th>🤖 Modo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Configuración de Firebase
+    const firebaseConfig = {
+        apiKey: "AIzaSyAUPCvhpU55tSAKu_pwyhbe2nWgnXhJ5uY",
+        authDomain: "iot-project-e08fe.firebaseapp.com",
+        databaseURL: "https://iot-project-e08fe-default-rtdb.firebaseio.com",
+        projectId: "iot-project-e08fe",
+        storageBucket: "iot-project-e08fe.appspot.com",
+        messagingSenderId: "246920152193",
+        appId: "1:246920152193:web:11fd20f94660d650cf7980"
+    };
+
+    // Inicializar Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // Variables globales
+    let tempChart, lightChart, actuatorsChart, hourlyChart;
+    let datosActuales = [];
+
+    // Configuración común de gráficos
+    const chartCommonConfig = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    color: 'rgba(255, 255, 255, 0.9)',
+                    usePointStyle: true,
+                    padding: 20,
+                    font: {
+                        size: 12,
+                        weight: 500
+                    }
+                }
+            },
+            tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                titleColor: 'white',
+                bodyColor: 'white',
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+                borderWidth: 1,
+                cornerRadius: 8,
+                displayColors: true
+            }
+        },
+        scales: {
+            x: {
+                grid: { color: 'rgba(255, 255, 255, 0.1)', drawBorder: false },
+                ticks: { color: 'rgba(255, 255, 255, 0.8)', font: { size: 11 } }
+            },
+            y: {
+                grid: { color: 'rgba(255, 255, 255, 0.1)', drawBorder: false },
+                ticks: { color: 'rgba(255, 255, 255, 0.8)', font: { size: 11 } }
+            }
+        },
+        animation: {
+            duration: 1000,
+            easing: 'easeInOutQuart'
+        }
+    };
+
+    // Inicializar gráficos
+    function inicializarGraficos() {
+        const tempCtx = document.getElementById('tempChart').getContext('2d');
+        tempChart = new Chart(tempCtx, {
+            type: 'line',
+            data: { 
+                labels: [], 
+                datasets: [{ 
+                    label: 'Temperatura (°C)', 
+                    data: [], 
+                    borderColor: '#ff6b6b', 
+                    backgroundColor: 'rgba(255, 107, 107, 0.1)', 
+                    fill: true, 
+                    tension: 0.4, 
+                    borderWidth: 3, 
+                    pointBackgroundColor: '#ff6b6b', 
+                    pointBorderColor: '#fff', 
+                    pointBorderWidth: 2, 
+                    pointRadius: 5 
+                }] 
+            },
+            options: {
+                ...chartCommonConfig,
+                scales: {
+                    ...chartCommonConfig.scales,
+                    y: { 
+                        ...chartCommonConfig.scales.y, 
+                        title: { 
+                            display: true, 
+                            text: 'Temperatura (°C)', 
+                            color: 'rgba(255, 255, 255, 0.8)' 
+                        } 
+                    }
+                }
+            }
+        });
+
+        const lightCtx = document.getElementById('lightChart').getContext('2d');
+        lightChart = new Chart(lightCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { 
+                        label: 'Sensor Luz 1', 
+                        data: [], 
+                        borderColor: '#4ecdc4', 
+                        backgroundColor: 'rgba(78, 205, 196, 0.1)', 
+                        fill: false, 
+                        tension: 0.4, 
+                        borderWidth: 3, 
+                        pointBackgroundColor: '#4ecdc4', 
+                        pointBorderColor: '#fff', 
+                        pointBorderWidth: 2, 
+                        pointRadius: 4 
+                    },
+                    { 
+                        label: 'Sensor Luz 2', 
+                        data: [], 
+                        borderColor: '#45b7d1', 
+                        backgroundColor: 'rgba(69, 183, 209, 0.1)', 
+                        fill: false, 
+                        tension: 0.4, 
+                        borderWidth: 3, 
+                        pointBackgroundColor: '#45b7d1', 
+                        pointBorderColor: '#fff', 
+                        pointBorderWidth: 2, 
+                        pointRadius: 4 
+                    }
+                ]
+            },
+            options: {
+                ...chartCommonConfig,
+                scales: {
+                    ...chartCommonConfig.scales,
+                    y: { 
+                        ...chartCommonConfig.scales.y, 
+                        title: { 
+                            display: true, 
+                            text: 'Intensidad de Luz', 
+                            color: 'rgba(255, 255, 255, 0.8)' 
+                        } 
+                    }
+                }
+            }
+        });
+
+        const actuatorsCtx = document.getElementById('actuatorsChart').getContext('2d');
+        actuatorsChart = new Chart(actuatorsCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [
+                    { 
+                        label: 'LED 1', 
+                        data: [], 
+                        backgroundColor: 'rgba(150, 206, 180, 0.8)', 
+                        borderColor: '#96ceb4', 
+                        borderWidth: 2 
+                    },
+                    { 
+                        label: 'LED 2', 
+                        data: [], 
+                        backgroundColor: 'rgba(254, 202, 87, 0.8)', 
+                        borderColor: '#feca57', 
+                        borderWidth: 2 
+                    },
+                    { 
+                        label: 'Ventilador', 
+                        data: [], 
+                        backgroundColor: 'rgba(255, 159, 243, 0.8)', 
+                        borderColor: '#ff9ff3', 
+                        borderWidth: 2 
+                    }
+                ]
+            },
+            options: {
+                ...chartCommonConfig,
+                scales: {
+                    ...chartCommonConfig.scales,
+                    y: {
+                        ...chartCommonConfig.scales.y,
+                        beginAtZero: true,
+                        max: 1,
+                        title: {
+                            display: true,
+                            text: 'Estado (0=OFF, 1=ON)',
+                            color: 'rgba(255, 255, 255, 0.8)'
+                        }
+                    }
+                }
+            }
+        });
+
+        const hourlyCtx = document.getElementById('hourlyChart').getContext('2d');
+        hourlyChart = new Chart(hourlyCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{ 
+                    label: 'Registros por Hora', 
+                    data: [], 
+                    backgroundColor: 'rgba(102, 126, 234, 0.8)', 
+                    borderColor: '#667eea', 
+                    borderWidth: 2, 
+                    borderRadius: 8 
+                }]
+            },
+            options: {
+                ...chartCommonConfig,
+                scales: {
+                    ...chartCommonConfig.scales,
+                    y: {
+                        ...chartCommonConfig.scales.y,
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Número de Registros',
+                            color: 'rgba(255, 255, 255, 0.8)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Función para filtrar datos por período
+    function filtrarDatosPorPeriodo(datos, periodoHoras) {
+        const ahora = new Date();
+        const tiempoLimite = new Date(ahora.getTime() - (periodoHoras * 60 * 60 * 1000));
+        return datos.filter(item => item.timestamp >= tiempoLimite);
+    }
+
+    // Cargar datos - CORREGIDO para la estructura de Firebase
+    async function cargarDatos() {
+        try {
+            console.log('Iniciando carga de datos...');
+            document.getElementById('connectionStatus').textContent = 'Conectando...';
+            document.getElementById('loadingIndicator').style.display = 'flex';
+            document.getElementById('errorMessage').style.display = 'none';
+
+            const dispositivo = document.getElementById('dispositivoSelect').value;
+            const periodoHoras = parseInt(document.getElementById('periodoSelect').value);
+            
+            // Corregido: La ruta correcta según tu estructura
+            const datosRef = database.ref(`datos_sensores/${dispositivo}`);
+            console.log(`Consultando: datos_sensores/${dispositivo}`);
+            
+            const snapshot = await datosRef.orderByKey().limitToLast(1000).once('value');
+            const datos = snapshot.val();
+            
+            console.log('Datos recibidos de Firebase:', datos);
+
+            if (!datos) {
+                throw new Error('No se encontraron datos para el dispositivo seleccionado');
+            }
+
+            // Procesar datos según la estructura: registro_[timestamp]
+            datosActuales = Object.entries(datos).map(([key, value]) => {
+                // Extraer timestamp del key (registro_1750696350489)
+                let timestamp = parseInt(key.split('_')[1]);
+                
+                // Si no se puede extraer del key, usar el timestamp del valor
+                if (!timestamp || isNaN(timestamp)) {
+                    timestamp = value.timestamp || Date.now();
+                }
+
+                return {
+                    id: key,
+                    timestamp: new Date(timestamp),
+                    temperatura: parseFloat(value.temperatura) || 0,
+                    luz1: parseInt(value.luz1) || 0,
+                    luz2: parseInt(value.luz2) || 0,
+                    led1_estado: value.led1_estado === true || value.led1_estado === 'true',
+                    led2_estado: value.led2_estado === true || value.led2_estado === 'true',
+                    ventilador_estado: value.ventilador_estado === true || value.ventilador_estado === 'true',
+                    modo_automatico: value.modo_automatico === true || value.modo_automatico === 'true'
+                };
+            }).sort((a, b) => a.timestamp - b.timestamp);
+
+            console.log('Datos procesados:', datosActuales);
+
+            // Filtrar por período
+            const datosFiltrados = filtrarDatosPorPeriodo(datosActuales, periodoHoras);
+            datosActuales = datosFiltrados;
+
+            document.getElementById('connectionStatus').textContent = 'Conectado ✅';
+            document.getElementById('totalRecords').textContent = datosActuales.length;
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('es-ES');
+
+            actualizarGraficos();
+            actualizarEstadisticas();
+            actualizarTabla();
+
+            document.getElementById('loadingIndicator').style.display = 'none';
+            document.getElementById('dataTable').style.display = 'table';
+
+        } catch (error) {
+            console.error('Error cargando datos:', error);
+            document.getElementById('connectionStatus').textContent = 'Error ❌';
+            document.getElementById('errorMessage').textContent = `Error al cargar datos: ${error.message}`;
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('loadingIndicator').style.display = 'none';
+        }
+    }
+
+    function actualizarGraficos() {
+        if (datosActuales.length === 0) {
+            console.log('No hay datos para mostrar en los gráficos');
+            return;
+        }
+
+        const tipoGrafico = document.getElementById('tipoGrafico').value;
+        const labels = datosActuales.map(item => 
+            item.timestamp.toLocaleTimeString('es-ES', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                day: '2-digit',
+                month: '2-digit'
+            })
+        );
+
+        // Gráfico de temperatura
+        tempChart.data.labels = labels;
+        tempChart.data.datasets[0].data = datosActuales.map(item => item.temperatura);
+        tempChart.update();
+
+        // Gráfico de sensores de luz
+        lightChart.type = tipoGrafico;
+        lightChart.data.labels = labels;
+        lightChart.data.datasets[0].data = datosActuales.map(item => item.luz1);
+        lightChart.data.datasets[1].data = datosActuales.map(item => item.luz2);
+        lightChart.update();
+
+        // Gráfico de actuadores
+        actuatorsChart.data.labels = labels;
+        actuatorsChart.data.datasets[0].data = datosActuales.map(item => item.led1_estado ? 1 : 0);
+        actuatorsChart.data.datasets[1].data = datosActuales.map(item => item.led2_estado ? 1 : 0);
+        actuatorsChart.data.datasets[2].data = datosActuales.map(item => item.ventilador_estado ? 1 : 0);
+        actuatorsChart.update();
+
+        // Gráfico por horas
+        const datosPorHora = {};
+        datosActuales.forEach(item => {
+            const hora = item.timestamp.getHours();
+            datosPorHora[hora] = (datosPorHora[hora] || 0) + 1;
+        });
+
+        const horasLabels = Object.keys(datosPorHora).sort((a, b) => parseInt(a) - parseInt(b));
+        hourlyChart.data.labels = horasLabels.map(h => `${h}:00`);
+        hourlyChart.data.datasets[0].data = horasLabels.map(h => datosPorHora[h]);
+        hourlyChart.update();
+    }
+
+    function actualizarEstadisticas() {
+        if (datosActuales.length === 0) {
+            document.getElementById('avgTemp').textContent = '--°C';
+            document.getElementById('avgLight1').textContent = '--';
+            document.getElementById('avgLight2').textContent = '--';
+            document.getElementById('activeDevices').textContent = '--';
+            return;
+        }
+
+        const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+        const tempAvg = avg(datosActuales.map(item => item.temperatura));
+        const luz1Avg = avg(datosActuales.map(item => item.luz1));
+        const luz2Avg = avg(datosActuales.map(item => item.luz2));
+
+        const ultimo = datosActuales[datosActuales.length - 1];
+        const activos = (ultimo.led1_estado ? 1 : 0) + (ultimo.led2_estado ? 1 : 0) + (ultimo.ventilador_estado ? 1 : 0);
+
+        document.getElementById('avgTemp').textContent = tempAvg.toFixed(1) + '°C';
+        document.getElementById('avgLight1').textContent = Math.round(luz1Avg);
+        document.getElementById('avgLight2').textContent = Math.round(luz2Avg);
+        document.getElementById('activeDevices').textContent = activos;
+    }
+
+    function actualizarTabla() {
+        const tbody = document.getElementById('dataTableBody');
+        tbody.innerHTML = '';
+        
+        if (datosActuales.length === 0) {
+            const row = tbody.insertRow();
+            row.innerHTML = '<td colspan="7" style="text-align: center;">No hay datos disponibles</td>';
+            return;
+        }
+
+        datosActuales.slice(-20).reverse().forEach(item => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${item.timestamp.toLocaleString('es-ES')}</td>
+                <td>${item.temperatura.toFixed(1)}°C</td>
+                <td>${item.luz1}</td>
+                <td>${item.luz2}</td>
+                <td>${item.led1_estado ? '🟢' : '🔴'} ${item.led2_estado ? '🟢' : '🔴'}</td>
+                <td>${item.ventilador_estado ? '🟢 ON' : '🔴 OFF'}</td>
+                <td>${item.modo_automatico ? '🤖 Auto' : '👤 Manual'}</td>
+            `;
+        });
+    }
+
+    // Función para actualizar manualmente
+    function actualizarDatos() {
+        cargarDatos();
+    }
+
+    // Eventos
+    document.getElementById('dispositivoSelect').addEventListener('change', cargarDatos);
+    document.getElementById('periodoSelect').addEventListener('change', cargarDatos);
+    document.getElementById('tipoGrafico').addEventListener('change', actualizarGraficos);
+
+    // Función para verificar que Chart.js esté cargado
+    function verificarChart() {
+        return new Promise((resolve) => {
+            if (typeof Chart !== 'undefined') {
+                resolve();
+            } else {
+                setTimeout(() => verificarChart().then(resolve), 100);
+            }
+        });
+    }
+
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', async function () {
+        console.log('DOM cargado, esperando Chart.js...');
+        
+        try {
+            // Esperar a que Chart.js se cargue
+            await verificarChart();
+            console.log('Chart.js cargado correctamente');
+            
+            inicializarGraficos();
+            cargarDatos();
+            
+            // Actualizar cada 30 segundos
+            setInterval(cargarDatos, 30000);
+        } catch (error) {
+            console.error('Error inicializando dashboard:', error);
+            document.getElementById('errorMessage').textContent = 'Error al cargar las librerías necesarias';
+            document.getElementById('errorMessage').style.display = 'block';
+        }
+    });
+    </script>
+</body>
+</html>
