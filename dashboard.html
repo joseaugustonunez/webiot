@@ -42,13 +42,6 @@
 
         <div class="controls">
             <div class="control-group">
-                <label for="dispositivoSelect">🔧 Dispositivo</label>
-                <select id="dispositivoSelect">
-                    <option value="ESP32_001">ESP32_001</option>
-                    <option value="ESP32_002">ESP32_002</option>
-                </select>
-            </div>
-            <div class="control-group">
                 <label for="periodoSelect">📅 Período</label>
                 <select id="periodoSelect">
                     <option value="1">Última hora</option>
@@ -74,7 +67,7 @@
             <div class="stat-card">
                 <div class="stat-icon">🌡️</div>
                 <div class="stat-value" id="avgTemp">--°C</div>
-                <div class="stat-label">Temperatura Promedio</div>
+                <div class="stat-label">Temperatura Actual</div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon">💡</div>
@@ -107,9 +100,9 @@
                 </div>
             </div>
             <div class="chart-container">
-                <div class="chart-title">⚙️ Estado de Actuadores</div>
+                <div class="chart-title">🔧 Estado de Servos</div>
                 <div class="chart-canvas">
-                    <canvas id="actuatorsChart"></canvas>
+                    <canvas id="servosChart"></canvas>
                 </div>
             </div>
             <div class="chart-container">
@@ -135,9 +128,10 @@
                             <th>🌡️ Temperatura</th>
                             <th>💡 Luz 1</th>
                             <th>🔆 Luz 2</th>
-                            <th>💡 LEDs</th>
                             <th>🌀 Ventilador</th>
-                            <th>🤖 Modo</th>
+                            <th>🔧 Servo 1</th>
+                            <th>🔧 Servo 2</th>
+                            <th>🔧 Servo 3</th>
                         </tr>
                     </thead>
                     <tbody id="dataTableBody">
@@ -164,8 +158,9 @@
     const database = firebase.database();
 
     // Variables globales
-    let tempChart, lightChart, actuatorsChart, hourlyChart;
+    let tempChart, lightChart, servosChart, hourlyChart;
     let datosActuales = [];
+    let datosHistorial = [];
 
     // Configuración común de gráficos
     const chartCommonConfig = {
@@ -297,28 +292,28 @@
             }
         });
 
-        const actuatorsCtx = document.getElementById('actuatorsChart').getContext('2d');
-        actuatorsChart = new Chart(actuatorsCtx, {
+        const servosCtx = document.getElementById('servosChart').getContext('2d');
+        servosChart = new Chart(servosCtx, {
             type: 'bar',
             data: {
                 labels: [],
                 datasets: [
                     { 
-                        label: 'LED 1', 
+                        label: 'Servo 1', 
                         data: [], 
                         backgroundColor: 'rgba(150, 206, 180, 0.8)', 
                         borderColor: '#96ceb4', 
                         borderWidth: 2 
                     },
                     { 
-                        label: 'LED 2', 
+                        label: 'Servo 2', 
                         data: [], 
                         backgroundColor: 'rgba(254, 202, 87, 0.8)', 
                         borderColor: '#feca57', 
                         borderWidth: 2 
                     },
                     { 
-                        label: 'Ventilador', 
+                        label: 'Servo 3', 
                         data: [], 
                         backgroundColor: 'rgba(255, 159, 243, 0.8)', 
                         borderColor: '#ff9ff3', 
@@ -333,10 +328,10 @@
                     y: {
                         ...chartCommonConfig.scales.y,
                         beginAtZero: true,
-                        max: 1,
+                        max: 180,
                         title: {
                             display: true,
-                            text: 'Estado (0=OFF, 1=ON)',
+                            text: 'Ángulo (grados)',
                             color: 'rgba(255, 255, 255, 0.8)'
                         }
                     }
@@ -383,7 +378,7 @@
         return datos.filter(item => item.timestamp >= tiempoLimite);
     }
 
-    // Cargar datos - CORREGIDO para la estructura de Firebase
+    // Cargar datos con la estructura correcta de Firebase
     async function cargarDatos() {
         try {
             console.log('Iniciando carga de datos...');
@@ -391,50 +386,62 @@
             document.getElementById('loadingIndicator').style.display = 'flex';
             document.getElementById('errorMessage').style.display = 'none';
 
-            const dispositivo = document.getElementById('dispositivoSelect').value;
             const periodoHoras = parseInt(document.getElementById('periodoSelect').value);
             
-            // Corregido: La ruta correcta según tu estructura
-            const datosRef = database.ref(`datos_sensores/${dispositivo}`);
-            console.log(`Consultando: datos_sensores/${dispositivo}`);
+            // Obtener datos actuales de actuadores
+            const actuadoresRef = database.ref('actuadores');
             
-            const snapshot = await datosRef.orderByKey().limitToLast(1000).once('value');
-            const datos = snapshot.val();
+            // Obtener historial (limitamos a los últimos 1000 registros para mejor rendimiento)
+            const historialRef = database.ref('historial').orderByKey().limitToLast(1000);
             
-            console.log('Datos recibidos de Firebase:', datos);
+            // Obtener todos los datos en paralelo
+            const [actuadoresSnapshot, historialSnapshot] = await Promise.all([
+                actuadoresRef.once('value'),
+                historialRef.once('value')
+            ]);
 
-            if (!datos) {
-                throw new Error('No se encontraron datos para el dispositivo seleccionado');
+            const actuadores = actuadoresSnapshot.val();
+            const historial = historialSnapshot.val();
+
+            console.log('Datos recibidos:', { actuadores, historial });
+
+            if (!historial) {
+                throw new Error('No se encontraron datos de historial');
             }
 
-            // Procesar datos según la estructura: registro_[timestamp]
-            datosActuales = Object.entries(datos).map(([key, value]) => {
-                // Extraer timestamp del key (registro_1750696350489)
-                let timestamp = parseInt(key.split('_')[1]);
+            // Procesar datos del historial
+            datosHistorial = [];
+            Object.entries(historial).forEach(([timestamp, datos]) => {
+                // Los timestamps parecen ser números secuenciales, no timestamps reales
+                // Usaremos un timestamp base y los espaciaremos cada minuto
+                const timestampNum = parseInt(timestamp);
+                const fechaBase = new Date();
+                fechaBase.setTime(fechaBase.getTime() - (Object.keys(historial).length - Object.keys(historial).indexOf(timestamp)) * 60000); // 1 minuto entre registros
                 
-                // Si no se puede extraer del key, usar el timestamp del valor
-                if (!timestamp || isNaN(timestamp)) {
-                    timestamp = value.timestamp || Date.now();
-                }
+                datosHistorial.push({
+                    id: timestamp,
+                    timestamp: fechaBase,
+                    temperatura: parseFloat(datos.temperatura) || 0,
+                    luz1: parseInt(datos.luz1) || 0,
+                    luz2: parseInt(datos.luz2) || 0,
+                    ventilador: datos.ventilador === true || datos.ventilador === 'true',
+                    servo1: parseInt(datos.servo1) || 0,
+                    servo2: parseInt(datos.servo2) || 0,
+                    servo3: parseInt(datos.servo3) || 0
+                });
+            });
 
-                return {
-                    id: key,
-                    timestamp: new Date(timestamp),
-                    temperatura: parseFloat(value.temperatura) || 0,
-                    luz1: parseInt(value.luz1) || 0,
-                    luz2: parseInt(value.luz2) || 0,
-                    led1_estado: value.led1_estado === true || value.led1_estado === 'true',
-                    led2_estado: value.led2_estado === true || value.led2_estado === 'true',
-                    ventilador_estado: value.ventilador_estado === true || value.ventilador_estado === 'true',
-                    modo_automatico: value.modo_automatico === true || value.modo_automatico === 'true'
-                };
-            }).sort((a, b) => a.timestamp - b.timestamp);
-
-            console.log('Datos procesados:', datosActuales);
+            // Ordenar por timestamp
+            datosHistorial.sort((a, b) => a.timestamp - b.timestamp);
 
             // Filtrar por período
-            const datosFiltrados = filtrarDatosPorPeriodo(datosActuales, periodoHoras);
-            datosActuales = datosFiltrados;
+            datosActuales = filtrarDatosPorPeriodo(datosHistorial, periodoHoras);
+
+            console.log('Datos procesados:', {
+                totalHistorial: datosHistorial.length,
+                datosFiltrados: datosActuales.length,
+                muestraData: datosActuales.slice(0, 3) // Mostrar los primeros 3 registros
+            });
 
             document.getElementById('connectionStatus').textContent = 'Conectado ✅';
             document.getElementById('totalRecords').textContent = datosActuales.length;
@@ -459,8 +466,29 @@
     function actualizarGraficos() {
         if (datosActuales.length === 0) {
             console.log('No hay datos para mostrar en los gráficos');
+            // Limpiar gráficos si no hay datos
+            tempChart.data.labels = [];
+            tempChart.data.datasets[0].data = [];
+            tempChart.update();
+            
+            lightChart.data.labels = [];
+            lightChart.data.datasets[0].data = [];
+            lightChart.data.datasets[1].data = [];
+            lightChart.update();
+            
+            servosChart.data.labels = [];
+            servosChart.data.datasets[0].data = [];
+            servosChart.data.datasets[1].data = [];
+            servosChart.data.datasets[2].data = [];
+            servosChart.update();
+            
+            hourlyChart.data.labels = [];
+            hourlyChart.data.datasets[0].data = [];
+            hourlyChart.update();
             return;
         }
+
+        console.log('Actualizando gráficos con', datosActuales.length, 'datos');
 
         const tipoGrafico = document.getElementById('tipoGrafico').value;
         const labels = datosActuales.map(item => 
@@ -471,6 +499,8 @@
                 month: '2-digit'
             })
         );
+
+        console.log('Labels generados:', labels.slice(0, 5)); // Mostrar primeros 5 labels
 
         // Gráfico de temperatura
         tempChart.data.labels = labels;
@@ -484,12 +514,12 @@
         lightChart.data.datasets[1].data = datosActuales.map(item => item.luz2);
         lightChart.update();
 
-        // Gráfico de actuadores
-        actuatorsChart.data.labels = labels;
-        actuatorsChart.data.datasets[0].data = datosActuales.map(item => item.led1_estado ? 1 : 0);
-        actuatorsChart.data.datasets[1].data = datosActuales.map(item => item.led2_estado ? 1 : 0);
-        actuatorsChart.data.datasets[2].data = datosActuales.map(item => item.ventilador_estado ? 1 : 0);
-        actuatorsChart.update();
+        // Gráfico de servos
+        servosChart.data.labels = labels;
+        servosChart.data.datasets[0].data = datosActuales.map(item => item.servo1);
+        servosChart.data.datasets[1].data = datosActuales.map(item => item.servo2);
+        servosChart.data.datasets[2].data = datosActuales.map(item => item.servo3);
+        servosChart.update();
 
         // Gráfico por horas
         const datosPorHora = {};
@@ -502,10 +532,13 @@
         hourlyChart.data.labels = horasLabels.map(h => `${h}:00`);
         hourlyChart.data.datasets[0].data = horasLabels.map(h => datosPorHora[h]);
         hourlyChart.update();
+
+        console.log('Gráficos actualizados correctamente');
     }
 
     function actualizarEstadisticas() {
         if (datosActuales.length === 0) {
+            console.log('No hay datos para estadísticas');
             document.getElementById('avgTemp').textContent = '--°C';
             document.getElementById('avgLight1').textContent = '--';
             document.getElementById('avgLight2').textContent = '--';
@@ -513,18 +546,23 @@
             return;
         }
 
-        const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-        const tempAvg = avg(datosActuales.map(item => item.temperatura));
-        const luz1Avg = avg(datosActuales.map(item => item.luz1));
-        const luz2Avg = avg(datosActuales.map(item => item.luz2));
-
+        // Mostrar valores actuales (último dato)
         const ultimo = datosActuales[datosActuales.length - 1];
-        const activos = (ultimo.led1_estado ? 1 : 0) + (ultimo.led2_estado ? 1 : 0) + (ultimo.ventilador_estado ? 1 : 0);
-
-        document.getElementById('avgTemp').textContent = tempAvg.toFixed(1) + '°C';
-        document.getElementById('avgLight1').textContent = Math.round(luz1Avg);
-        document.getElementById('avgLight2').textContent = Math.round(luz2Avg);
+        console.log('Último dato para estadísticas:', ultimo);
+        
+        document.getElementById('avgTemp').textContent = ultimo.temperatura.toFixed(1) + '°C';
+        document.getElementById('avgLight1').textContent = ultimo.luz1;
+        document.getElementById('avgLight2').textContent = ultimo.luz2;
+        
+        // Contar actuadores activos
+        let activos = 0;
+        if (ultimo.ventilador) activos++;
+        if (ultimo.servo1 > 0) activos++;
+        if (ultimo.servo2 > 0) activos++;
+        if (ultimo.servo3 > 0) activos++;
+        
         document.getElementById('activeDevices').textContent = activos;
+        console.log('Estadísticas actualizadas - Activos:', activos);
     }
 
     function actualizarTabla() {
@@ -533,10 +571,11 @@
         
         if (datosActuales.length === 0) {
             const row = tbody.insertRow();
-            row.innerHTML = '<td colspan="7" style="text-align: center;">No hay datos disponibles</td>';
+            row.innerHTML = '<td colspan="8" style="text-align: center;">No hay datos disponibles</td>';
             return;
         }
 
+        // Mostrar los últimos 20 registros
         datosActuales.slice(-20).reverse().forEach(item => {
             const row = tbody.insertRow();
             row.innerHTML = `
@@ -544,9 +583,10 @@
                 <td>${item.temperatura.toFixed(1)}°C</td>
                 <td>${item.luz1}</td>
                 <td>${item.luz2}</td>
-                <td>${item.led1_estado ? '🟢' : '🔴'} ${item.led2_estado ? '🟢' : '🔴'}</td>
-                <td>${item.ventilador_estado ? '🟢 ON' : '🔴 OFF'}</td>
-                <td>${item.modo_automatico ? '🤖 Auto' : '👤 Manual'}</td>
+                <td>${item.ventilador ? '🟢 ON' : '🔴 OFF'}</td>
+                <td>${item.servo1}°</td>
+                <td>${item.servo2}°</td>
+                <td>${item.servo3}°</td>
             `;
         });
     }
@@ -557,7 +597,6 @@
     }
 
     // Eventos
-    document.getElementById('dispositivoSelect').addEventListener('change', cargarDatos);
     document.getElementById('periodoSelect').addEventListener('change', cargarDatos);
     document.getElementById('tipoGrafico').addEventListener('change', actualizarGraficos);
 
